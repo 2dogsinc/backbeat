@@ -236,6 +236,8 @@ class QueueProcessor extends EventEmitter {
                 const validActions = {
                     pauseService: this._pauseService.bind(this),
                     resumeService: this._resumeService.bind(this),
+                    cancelScheduledResumeService:
+                        this._cancelScheduledResumeService.bind(this),
                 };
                 try {
                     const { action, date } = JSON.parse(message);
@@ -302,6 +304,28 @@ class QueueProcessor extends EventEmitter {
                 }
             });
         }
+    }
+
+    /**
+     * Cancel scheduled resume (if any)
+     * @return {undefined}
+     */
+    _cancelScheduledResumeService() {
+        this._updateZkStateNode('scheduledResume', null, err => {
+            if (err) {
+                this.logger.trace('error occurred saving state to zookeeper', {
+                    method: 'QueueProcessor._cancelResumeService',
+                });
+            } else if (this.scheduledResume) {
+                this.scheduledResume.cancel();
+                this.scheduledResume = null;
+                this.logger.info('canceled scheduled CRR resume for location:' +
+                    ` ${this.site}`);
+            } else {
+                this.logger.info('no scheduled CRR resume for location: ' +
+                    ` ${this.site}`);
+            }
+        });
     }
 
     _getZkSiteNode() {
