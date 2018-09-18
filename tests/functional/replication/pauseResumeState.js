@@ -293,6 +293,7 @@ describe('CRR Pause/Resume status updates', function d() {
 
     after(() => {
         zkHelper.close();
+        // TODO: Close QueueProcessors
     });
 
     // it.only('HALP CLEAN ZK', done => {
