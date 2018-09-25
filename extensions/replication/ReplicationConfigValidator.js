@@ -41,10 +41,10 @@ const joiSchema = {
         }).required(),
         bootstrapList: bootstrapListJoi,
         certFilePaths: joi.object({
-            key: joi.string().required(),
-            cert: joi.string().required(),
+            key: joi.string().empty(''),
+            cert: joi.string().empty(''),
             ca: joi.string().empty(''),
-        }).required(),
+        }),
     },
     topic: joi.string().required(),
     replicationStatusTopic: joi.string().required(),
@@ -91,26 +91,27 @@ function configValidator(backbeatConfig, extConfig) {
 
     // additional target certs checks
     const { certFilePaths } = destination;
-    const { key, cert, ca } = certFilePaths;
+    if (certFilePaths) {
+        const { key, cert, ca } = certFilePaths;
 
-    const makePath = value =>
+        const makePath = value =>
               (value.startsWith('/') ?
                value : `${backbeatConfig.getBasePath()}/${value}`);
-    const keypath = makePath(key);
-    const certpath = makePath(cert);
-    let capath = undefined;
-    fs.accessSync(keypath, fs.F_OK | fs.R_OK);
-    fs.accessSync(certpath, fs.F_OK | fs.R_OK);
-    if (ca) {
-        capath = makePath(ca);
-        fs.accessSync(capath, fs.F_OK | fs.R_OK);
+        destination.https = {};
+        if (key && cert) {
+            const keypath = makePath(key);
+            const certpath = makePath(cert);
+            fs.accessSync(keypath, fs.F_OK | fs.R_OK);
+            fs.accessSync(certpath, fs.F_OK | fs.R_OK);
+            destination.https.cert = fs.readFileSync(certpath, 'ascii');
+            destination.https.key = fs.readFileSync(keypath, 'ascii');
+        }
+        if (ca) {
+            const capath = makePath(ca);
+            fs.accessSync(capath, fs.F_OK | fs.R_OK);
+            destination.https.ca = fs.readFileSync(capath, 'ascii');
+        }
     }
-
-    destination.https = {
-        cert: fs.readFileSync(certpath, 'ascii'),
-        key: fs.readFileSync(keypath, 'ascii'),
-        ca: ca ? fs.readFileSync(capath, 'ascii') : undefined,
-    };
     return validatedConfig;
 }
 

@@ -1,6 +1,7 @@
 'use strict'; // eslint-disable-line
 
 const http = require('http');
+const https = require('https');
 const { EventEmitter } = require('events');
 
 const Logger = require('werelogs').Logger;
@@ -84,9 +85,17 @@ class QueueProcessor extends EventEmitter {
         this.logger = new Logger('Backbeat:Replication:QueueProcessor');
 
         // global variables
-        // TODO: for SSL support, create HTTPS agents instead
         this.sourceHTTPAgent = new http.Agent({ keepAlive: true });
-        this.destHTTPAgent = new http.Agent({ keepAlive: true });
+        if (destConfig.transport === 'https') {
+            this.destHTTPAgent = new https.Agent({
+                key: destConfig.https.key,
+                cert: destConfig.https.cert,
+                ca: destConfig.https.ca,
+                keepAlive: true,
+            });
+        } else {
+            this.destHTTPAgent = new http.Agent({ keepAlive: true });
+        }
 
         this._setupVaultclientCache();
 
@@ -161,6 +170,13 @@ class QueueProcessor extends EventEmitter {
                 // proxy
                 this.vaultclientCache.setProxyPath('dest:s3',
                                                    proxyVaultPath);
+                if (this.destConfig.transport === 'https') {
+                    // enable HTTPS to nginx proxy
+                    this.vaultclientCache.setHttps(
+                        'dest:s3', this.destConfig.https.key,
+                        this.destConfig.https.cert,
+                        this.destConfig.https.ca);
+                }
             }
         }
     }
