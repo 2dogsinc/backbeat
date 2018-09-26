@@ -287,24 +287,28 @@ class QueueProcessor extends EventEmitter {
     _resumeService(date) {
         const enabled = this._consumer.getServiceStatus();
         const now = new Date();
-        if (date && now < new Date(date)) {
-            // if date is in the future, attempt to schedule job
-            this.scheduleResume(date);
-        } else if (!enabled) {
-            // if currently paused, attempt to resume
-            this._updateZkStateNode('paused', false, err => {
-                if (err) {
-                    this.logger.trace('error occurred saving state to ' +
-                    'zookeeper', {
-                        method: 'QueueProcessor._resumeService',
-                    });
-                } else {
-                    this._consumer.resume(this.site);
-                    this.logger.info('resumed replication for location: ' +
-                        `${this.site}`);
-                    this._deleteScheduledResumeService();
-                }
-            });
+
+        // if currently paused, attempt to resume or schedule resume
+        if (!enabled) {
+            if (date && now < new Date(date)) {
+                // if date is in the future and the site is current paused,
+                // attempt to schedule job
+                this.scheduleResume(date);
+            } else {
+                this._updateZkStateNode('paused', false, err => {
+                    if (err) {
+                        this.logger.trace('error occurred saving state to ' +
+                        'zookeeper', {
+                            method: 'QueueProcessor._resumeService',
+                        });
+                    } else {
+                        this._consumer.resume(this.site);
+                        this.logger.info('resumed replication for location: ' +
+                            `${this.site}`);
+                        this._deleteScheduledResumeService();
+                    }
+                });
+            }
         }
     }
 

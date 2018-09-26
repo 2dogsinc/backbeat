@@ -499,30 +499,21 @@ describe('CRR Pause/Resume status updates', function d() {
         });
     });
 
-    // TODO: ZENKO-1086
-    it.skip('should not schedule a resume when the location is already active',
+    it('should not schedule a resume when the location is already active',
     done => {
-        let zkScheduleState;
-        let zkPauseState;
         // send fake api request
         mockAPI.resumeCRRService(firstSite, futureDate);
 
-        return async.doWhilst(cb => setTimeout(() => {
+        setTimeout(() => {
             zkHelper.get(firstSite, (err, data) => {
-                if (err) {
-                    return cb(err);
-                }
-                zkScheduleState = data.scheduledResume;
-                zkPauseState = data.paused;
-                return cb();
+                assert.ifError(err);
+
+                assert.strictEqual(data.scheduledResume, null);
+                assert.strictEqual(data.paused, false);
+                assert.strictEqual(isConsumerActive(consumer1), true);
+                done();
             });
-        }, 1000), () => isConsumerActive(consumer1),
-        err => {
-            assert.ifError(err);
-            assert.strictEqual(zkScheduleState, undefined);
-            assert.strictEqual(zkPauseState, false);
-            done();
-        });
+        }, 1000);
     });
 
     it('should resume a location when a scheduled resume triggers',
