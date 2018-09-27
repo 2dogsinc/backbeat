@@ -7,7 +7,6 @@ const { attachReqUids } = require('../../../lib/clients/utils');
 const BackbeatTask = require('../../../lib/tasks/BackbeatTask');
 
 const RETRYTIMEOUTS = 300;
-
 // Default max AWS limit is 1000 for both list objects and list object versions
 const MAX_KEYS = process.env.CI === 'true' ? 3 : 1000;
 // concurrency mainly used in async calls
@@ -930,19 +929,48 @@ class LifecycleTask extends BackbeatTask {
     versioningStatus, log, done) {
         const isDeleteMarker = this._isDeleteMarker(version);
 
+        // TODO: Check outcome of aws test in bucket 'philz-newest-lc-test'
+        if (isDeleteMarker) {
+            // check EODM
+            return this._checkAndApplyEODMRule(bucketData, version,
+                listOfVersions, rules, log, done);
+        }
+        // if Expiration rule exists, apply it here to a Version
+        if (rules.Expiration) {
+            this._checkAndApplyExpirationRule(bucketData, version, rules,
+                log);
+            return done();
+        }
+
+        // TODO:
+        // When comparing IsLatest versions
+        // - In a versioning-suspended bucket, if IsLatest has null vID and it
+        //   is a DM, no action
+        // - In a versioning-suspended bucket, if IsLatest had null vID and it
+        //   is a Version, delete the Version and add a null vID DM
+        // - In a versioning-suspended bucket, if IsLatest has a vID, add a null
+        //   vID DM (regardless if IsLatest is a Version or DM)
+        //
+        // - In a versioning-enabled bucket, if Version, apply expiration rule,
+        //   and add a DM w/ vID
+        // - In a versioning-enabled bucket, if DM, and no other versions with
+        //   the Key, the EODM rule applies
+        // - In a versioning-enabled bucket, if DM, and has 1+ versions with the
+        //   key, no action
+
         // 1. In a versioning-suspended bucket, create a DM with null as version
         //    ID. Doesn't matter if IsLatest is a Version or DM
         // 2. In a versioning-enabled bucket, if Version, apply expiration rule,
         //    and add delete marker
-        if (versioningStatus === 'Suspended' ||
-        (versioningStatus === 'Enabled' && !isDeleteMarker)) {
-            // if Expiration rule exists, apply it here
-            if (rules.Expiration) {
-                this._checkAndApplyExpirationRule(bucketData, version, rules,
-                    log);
-            }
-            return done();
-        }
+        // if (versioningStatus === 'Suspended' ||
+        // (versioningStatus === 'Enabled' && !isDeleteMarker)) {
+        //     // if Expiration rule exists, apply it here
+        //     if (rules.Expiration) {
+        //         this._checkAndApplyExpirationRule(bucketData, version, rules,
+        //             log);
+        //     }
+        //     return done();
+        // }
 
         // All other cases below means versioningStatus === 'Enabled'
 
@@ -950,10 +978,10 @@ class LifecycleTask extends BackbeatTask {
         //    enabled, the ExpiredObjectDeleteMarker rule applies.
         // 4. If DM is current version and there are 1+ versions for that key,
         //    no action is taken
-        if (isDeleteMarker) {
-            return this._checkAndApplyEODMRule(bucketData, version,
-                listOfVersions, rules, log, done);
-        }
+        // if (isDeleteMarker) {
+        //     return this._checkAndApplyEODMRule(bucketData, version,
+        //         listOfVersions, rules, log, done);
+        // }
 
         log.debug('no action taken on IsLatest version', {
             bucket: bucketData.target.bucket,
