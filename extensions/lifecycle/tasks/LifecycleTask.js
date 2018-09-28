@@ -726,28 +726,35 @@ class LifecycleTask extends BackbeatTask {
                     v.Key === deleteMarker.Key && !v.IsLatest));
 
                 // if there are no other versions with the same Key as this DM,
-                // the ExpiredObjectDeleteMarker rule applies. Otherwise, no
-                // rule applies to this `IsLatest` DM
-                if (matchingNoncurrentKeys.length === 0 && rules.Expiration &&
-                rules.Expiration.ExpiredObjectDeleteMarker) {
-                    const entry = {
-                        action: 'deleteObject',
-                        target: {
-                            owner: bucketData.target.owner,
-                            bucket: bucketData.target.bucket,
-                            key: deleteMarker.Key,
-                            version: deleteMarker.VersionId,
-                        },
-                    };
-                    this.sendObjectEntry(entry, err => {
-                        if (!err) {
-                            log.debug('sent object entry for ' +
-                            'consumption', {
-                                method: 'LifecycleTask._checkAndApplyEODMRule',
-                                entry,
-                            });
-                        }
-                    });
+                // and the ExpiredObjectDeleteMarker rule is not explicitly
+                // 'false', apply ExpiredObjectDeleteMarker
+                const eodm = rules.Expiration &&
+                    rules.Expiration.ExpiredObjectDeleteMarker;
+                if (matchingNoncurrentKeys.length === 0 && eodm !== 'false') {
+                    // if lifecycle user, automatically apply
+                    // if not lifecycle user, check eodm is 'true'
+                    if (isLifecycleUser(deleteMarker.Owner.ID) ||
+                    eodm === 'true') {
+                        const entry = {
+                            action: 'deleteObject',
+                            target: {
+                                owner: bucketData.target.owner,
+                                bucket: bucketData.target.bucket,
+                                key: deleteMarker.Key,
+                                version: deleteMarker.VersionId,
+                            },
+                        };
+                        this.sendObjectEntry(entry, err => {
+                            if (!err) {
+                                log.debug('sent object entry for ' +
+                                'consumption', {
+                                    method:
+                                    'LifecycleTask._checkAndApplyEODMRule',
+                                    entry,
+                                });
+                            }
+                        });
+                    }
                 }
                 next();
             },
