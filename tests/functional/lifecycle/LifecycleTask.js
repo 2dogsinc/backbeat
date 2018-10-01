@@ -261,6 +261,8 @@ class S3Helper {
         return this.s3.putBucketLifecycleConfiguration(lcParams, cb);
     }
 
+    // TODO: setup should work for both non-versioned and versioned.
+    //       Just need a delete marker as IsLatest and no noncurrent versions.
     setupEODM(bucket, key, cb) {
         async.waterfall([
             next => this.setAndCreateBucket(bucket, next),
@@ -834,20 +836,6 @@ describe('lifecycle task functional tests', function dF() {
                 },
             },
             {
-                message: 'should implicitly apply ExpiredObjectDeleteMarker ' +
-                    'rule when a valid and applicable EXPIRATION rule is ' +
-                    'set, EODM is not false, and owner is Lifecycle service ' +
-                    'account',
-                bucketLCRules: [
-                    new Rule().addID('task-1')
-                        .addExpiration('Days', 1).build(),
-                ],
-                owner: `${OWNER}/lifecycle`,
-                expected: {
-                    objectCount: 1,
-                },
-            },
-            {
                 message: 'should not apply ExpiredObjectDeleteMarker rule ' +
                     'when a valid and applicable EXPIRATION rule is set, ' +
                     'EODM is not false, and owner is NOT a Lifecycle ' +
@@ -862,14 +850,14 @@ describe('lifecycle task functional tests', function dF() {
                 },
             },
             {
-                message: 'should not apply ExpiredObjectDeleteMarker rule ' +
-                    'when EODM is set to false',
+                message: 'should not remove an expired object delete marker ' +
+                    'when the ExpiredObjectDeleteMarker rule is set to false',
                 bucketLCRules: [
                     new Rule().addID('task-1')
                         .addExpiration('ExpiredObjectDeleteMarker', false)
                         .build(),
                 ],
-                owner: `${OWNER}/lifecycle`,
+                owner: OWNER,
                 expected: {
                     objectCount: 0,
                 },
@@ -912,59 +900,6 @@ describe('lifecycle task functional tests', function dF() {
                     assert.ifError(err);
                     done();
                 });
-            });
-        });
-
-        it('should expire a version or delete marker in a versioning ' +
-        'suspended bucket by applying basic expiration rule', done => {
-            const bucket = 'test-bucket';
-            const keyName = 'test-key1';
-            const bucketEntry = {
-                action: 'testing-islatest',
-                target: {
-                    bucket,
-                    owner: OWNER,
-                },
-                details: {},
-            };
-            const params = {
-                lcTask,
-                lcp,
-                counter: 0,
-            };
-            async.waterfall([
-                next => s3Helper.setAndCreateBucket(bucket, next),
-                next => s3Helper.setBucketLifecycleConfigurations([
-                    new Rule().addID('task-1')
-                        .addExpiration('Date', PAST)
-                        .build(),
-                ], next),
-                (data, next) => s3Helper.setBucketVersioning('Enabled', next),
-                (data, next) => s3.putObject({
-                    Bucket: bucket,
-                    Key: keyName,
-                    Body: '',
-                }, next),
-                (data, next) => s3Helper.setBucketVersioning('Suspended', next),
-                (data, next) => s3.deleteObject({
-                    Bucket: bucket,
-                    Key: keyName,
-                }, next),
-                (data, next) => s3.getBucketLifecycleConfiguration({
-                    Bucket: bucket,
-                }, next),
-                (data, next) => {
-                    wrapProcessBucketEntry(data.Rules, bucketEntry, s3, params,
-                    (err, data) => {
-                        assert.ifError(err);
-
-                        assert.equal(data.count.object, 1);
-                        next();
-                    });
-                },
-            ], err => {
-                assert.ifError(err);
-                done();
             });
         });
 
