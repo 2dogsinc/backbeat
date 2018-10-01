@@ -820,6 +820,92 @@ describe('lifecycle task functional tests', function dF() {
 
         [
             {
+                message: 'should expire a version in a versioning suspended ' +
+                    'bucket using basic expiration rule',
+                isDeleteMarker: false,
+                expected: {
+                    objectCount: 1,
+                },
+            },
+            {
+                message: 'should NOT expire a delete marker in a versioning ' +
+                    'suspended bucket using basic expiration rule',
+                isDeleteMarker: true,
+                expected: {
+                    objectCount: 0,
+                },
+            },
+        ].forEach(item => {
+            it(item.message, done => {
+                const bucket = 'test-bucket';
+                const keyName = 'test-key1';
+                const bucketEntry = {
+                    action: 'testing-islatest',
+                    target: {
+                        bucket,
+                        owner: OWNER,
+                    },
+                    details: {},
+                };
+                const params = {
+                    lcTask,
+                    lcp,
+                    counter: 0,
+                };
+
+                async.waterfall([
+                    next => s3Helper.setAndCreateBucket(bucket, next),
+                    next => s3Helper.setBucketVersioning('Enabled',
+                        next),
+                    (data, next) => s3.putObject({
+                        Bucket: bucket,
+                        Key: keyName,
+                        Body: '',
+                    }, next),
+                    (data, next) => s3Helper.setBucketVersioning('Suspended',
+                        next),
+                    (data, next) => {
+                        if (item.isDeleteMarker) {
+                            return s3.deleteObject({
+                                Bucket: bucket,
+                                Key: keyName,
+                            }, err => {
+                                if (err) {
+                                    return next(err);
+                                }
+                                return next();
+                            });
+                        }
+                        return next();
+                    },
+                    next => s3Helper.setBucketLifecycleConfigurations([
+                        new Rule().addID('task-1')
+                            .addExpiration('Date', PAST)
+                            .build(),
+                    ], next),
+                    (data, next) => {
+                        s3.getBucketLifecycleConfiguration({
+                            Bucket: bucket,
+                        }, next);
+                    },
+                    (data, next) => {
+                        wrapProcessBucketEntry(data.Rules, bucketEntry, s3,
+                        params, (err, data) => {
+                            assert.ifError(err);
+                            assert.equal(data.count.object,
+                                item.expected.objectCount);
+                            next();
+                        });
+                    },
+                ], err => {
+                    assert.ifError(err);
+                    done();
+                });
+            });
+        });
+
+        [
+            {
                 message: 'should apply ExpiredObjectDeleteMarker rule on ' +
                     'only a delete marker in a versioning enabled bucket ' +
                     'with zero non-current versions',
@@ -912,59 +998,6 @@ describe('lifecycle task functional tests', function dF() {
                     assert.ifError(err);
                     done();
                 });
-            });
-        });
-
-        it('should expire a version or delete marker in a versioning ' +
-        'suspended bucket by applying basic expiration rule', done => {
-            const bucket = 'test-bucket';
-            const keyName = 'test-key1';
-            const bucketEntry = {
-                action: 'testing-islatest',
-                target: {
-                    bucket,
-                    owner: OWNER,
-                },
-                details: {},
-            };
-            const params = {
-                lcTask,
-                lcp,
-                counter: 0,
-            };
-            async.waterfall([
-                next => s3Helper.setAndCreateBucket(bucket, next),
-                next => s3Helper.setBucketLifecycleConfigurations([
-                    new Rule().addID('task-1')
-                        .addExpiration('Date', PAST)
-                        .build(),
-                ], next),
-                (data, next) => s3Helper.setBucketVersioning('Enabled', next),
-                (data, next) => s3.putObject({
-                    Bucket: bucket,
-                    Key: keyName,
-                    Body: '',
-                }, next),
-                (data, next) => s3Helper.setBucketVersioning('Suspended', next),
-                (data, next) => s3.deleteObject({
-                    Bucket: bucket,
-                    Key: keyName,
-                }, next),
-                (data, next) => s3.getBucketLifecycleConfiguration({
-                    Bucket: bucket,
-                }, next),
-                (data, next) => {
-                    wrapProcessBucketEntry(data.Rules, bucketEntry, s3, params,
-                    (err, data) => {
-                        assert.ifError(err);
-
-                        assert.equal(data.count.object, 1);
-                        next();
-                    });
-                },
-            ], err => {
-                assert.ifError(err);
-                done();
             });
         });
 
