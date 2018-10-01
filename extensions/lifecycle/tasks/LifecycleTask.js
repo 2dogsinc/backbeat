@@ -7,7 +7,6 @@ const { attachReqUids } = require('../../../lib/clients/utils');
 const BackbeatTask = require('../../../lib/tasks/BackbeatTask');
 
 const RETRYTIMEOUTS = 300;
-
 // Default max AWS limit is 1000 for both list objects and list object versions
 const MAX_KEYS = process.env.CI === 'true' ? 3 : 1000;
 // concurrency mainly used in async calls
@@ -416,13 +415,11 @@ class LifecycleTask extends BackbeatTask {
      * For all filtered rules, get rules that apply the earliest
      * @param {array} rules - list of filtered rules that apply to a specific
      *   object, version, or upload
-     * @param {boolean} isLCUser - is current account a lifecycle service
-     *   account
      * @return {object} all applicable rules with earliest dates of action
      *  i.e. { Expiration: { Date: <DateObject>, Days: 10 },
      *         NoncurrentVersionExpiration: { NoncurrentDays: 5 } }
      */
-    _getApplicableRules(rules, isLCUser) {
+    _getApplicableRules(rules) {
         // NOTE: Ask Team
         // Assumes if for example a rule defines expiration and transition
         // and if backbeat disables expiration and enables transition,
@@ -433,7 +430,7 @@ class LifecycleTask extends BackbeatTask {
             this.enabledRules[rule].enabled);
 
         /* eslint-disable no-param-reassign */
-        const filteredRules = rules.reduce((store, rule) => {
+        return rules.reduce((store, rule) => {
             // filter and find earliest dates
             // NOTE: only care about expiration for this feature.
             //  Add other lifecycle rules here for future features.
@@ -488,13 +485,6 @@ class LifecycleTask extends BackbeatTask {
             }
             return store;
         }, {});
-        // if EODM was not explicitly set and current account is LC account
-        // enable EODM rule by default
-        if (isLCUser && filteredRules.Expiration &&
-        filteredRules.Expiration.ExpiredObjectDeleteMarker !== false) {
-            filteredRules.Expiration.ExpiredObjectDeleteMarker = true;
-        }
-        return filteredRules;
         /* eslint-enable no-param-reassign */
     }
 
@@ -518,12 +508,11 @@ class LifecycleTask extends BackbeatTask {
      * @return {undefined}
      */
     _getRules(bucketData, bucketLCRules, object, log, done) {
-        const isLCUser = isLifecycleUser(bucketData.target.owner);
         if (this._isDeleteMarker(object)) {
             // DeleteMarkers don't have any tags, so avoid calling
             // `getObjectTagging` which will throw an error
             const filterRules = this._filterRules(bucketLCRules, object, []);
-            return done(null, this._getApplicableRules(filterRules, isLCUser));
+            return done(null, this._getApplicableRules(filterRules));
         }
 
         const tagParams = { Bucket: bucketData.target.bucket, Key: object.Key };
@@ -548,7 +537,7 @@ class LifecycleTask extends BackbeatTask {
             const filterRules = this._filterRules(bucketLCRules, object, tags);
 
             // reduce filteredRules to only get earliest dates
-            return done(null, this._getApplicableRules(filterRules, isLCUser));
+            return done(null, this._getApplicableRules(filterRules));
         });
     }
 
@@ -727,28 +716,35 @@ class LifecycleTask extends BackbeatTask {
                     v.Key === deleteMarker.Key && !v.IsLatest));
 
                 // if there are no other versions with the same Key as this DM,
-                // the ExpiredObjectDeleteMarker rule applies. Otherwise, no
-                // rule applies to this `IsLatest` DM
-                if (matchingNoncurrentKeys.length === 0 && rules.Expiration &&
-                rules.Expiration.ExpiredObjectDeleteMarker) {
-                    const entry = {
-                        action: 'deleteObject',
-                        target: {
-                            owner: bucketData.target.owner,
-                            bucket: bucketData.target.bucket,
-                            key: deleteMarker.Key,
-                            version: deleteMarker.VersionId,
-                        },
-                    };
-                    this.sendObjectEntry(entry, err => {
-                        if (!err) {
-                            log.debug('sent object entry for ' +
-                            'consumption', {
-                                method: 'LifecycleTask._checkAndApplyEODMRule',
-                                entry,
-                            });
-                        }
-                    });
+                // and the ExpiredObjectDeleteMarker rule is not explicitly
+                // set to false, apply ExpiredObjectDeleteMarker
+                const eodm = rules.Expiration &&
+                    rules.Expiration.ExpiredObjectDeleteMarker;
+                if (matchingNoncurrentKeys.length === 0 && eodm !== false) {
+                    // if lifecycle user, automatically apply
+                    // if not lifecycle user, check eodm is set to true
+                    if (isLifecycleUser(deleteMarker.Owner.ID) ||
+                    eodm === true) {
+                        const entry = {
+                            action: 'deleteObject',
+                            target: {
+                                owner: bucketData.target.owner,
+                                bucket: bucketData.target.bucket,
+                                key: deleteMarker.Key,
+                                version: deleteMarker.VersionId,
+                            },
+                        };
+                        this.sendObjectEntry(entry, err => {
+                            if (!err) {
+                                log.debug('sent object entry for ' +
+                                'consumption', {
+                                    method:
+                                        'LifecycleTask._checkAndApplyEODMRule',
+                                    entry,
+                                });
+                            }
+                        });
+                    }
                 }
                 next();
             },
