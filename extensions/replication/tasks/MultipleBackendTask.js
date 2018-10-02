@@ -190,27 +190,6 @@ class MultipleBackendTask extends ReplicateObject {
                 LocationConstraint: sourceEntry.getDataStoreName(),
             });
         }
-        if (sourceEntry.getReplicationIsNFS()) {
-            return this._checkObjectState(sourceEntry, destEntry, log, err => {
-                if (err) {
-                    if (err && !err.InvalidObjectState) {
-                        return doneOnce(err);
-                    }
-                    // Skip the error since we first want to abort
-                    return this._multipleBackendAbortMPU(sourceEntry, destEntry,
-                        uploadId, log, err => {
-                            if (err) {
-                                return doneOnce(err);
-                            }
-                            // Do not set status to FAILED if it's aborted. We
-                            // want to skip silently.
-                            return done(errors.InvalidObjectState);
-                        });
-                }
-                return this._putMPUPart(sourceEntry, destEntry, sourceReq, size,
-                    uploadId, partNumber, log, doneOnce);
-            });
-        }
         return this._putMPUPart(sourceEntry, destEntry, sourceReq, size,
             uploadId, partNumber, log, doneOnce);
     }
@@ -262,7 +241,7 @@ class MultipleBackendTask extends ReplicateObject {
             if (err) {
                 // eslint-disable-next-line no-param-reassign
                 err.origin = 'source';
-                log.error('an error occurred aboring multipart upload', {
+                log.error('an error occurred aborting multipart upload', {
                     method: 'MultipleBackendTask._multipleBackendAbortMPUOnce',
                     entry: destEntry.getLogInfo(),
                     origin: 'source',
@@ -562,6 +541,16 @@ class MultipleBackendTask extends ReplicateObject {
                 }),
             (err, data) => {
                 if (err) {
+                    if (sourceEntry.getReplicationIsNFS()) {
+                        const mpuErr = err;
+                        return this._checkMPUState(sourceEntry, destEntry,
+                        uploadId, log, err => {
+                            if (err) {
+                                return doneOnce(err);
+                            }
+                            return doneOnce(mpuErr);
+                        });
+                    }
                     // eslint-disable-next-line no-param-reassign
                     err.origin = 'source';
                     log.error('an error occurred on putting MPU part to S3', {
@@ -577,6 +566,31 @@ class MultipleBackendTask extends ReplicateObject {
                 return this._completeMPU(sourceEntry, destEntry, uploadId, data,
                     log, doneOnce);
             });
+    }
+
+    /**
+     * Wrapper for handling an ongoing MPU.
+     * @param {ObjectQueueEntry} sourceEntry - The source object entry
+     * @param {ObjectQueueEntry} destEntry - The destination object entry
+     * @param {String} uploadId - The upload ID of the initiated MPU
+     * @param {Werelogs} log - The logger instance
+     * @param {Function} cb - The callback to call
+     * @return {undefined}
+     */
+    _checkMPUState(sourceEntry, destEntry, uploadId, log, cb) {
+        return this._checkObjectState(sourceEntry, destEntry, log, err => {
+            if (err) {
+                if (err && !err.InvalidObjectState) {
+                    return cb(err);
+                }
+                // The latest object has different content so an attempt at CRR
+                // will fail in CloudServer. We can safely skip this entry
+                // because it is not the latest object.
+                return this._multipleBackendAbortMPU(sourceEntry, destEntry,
+                    uploadId, log, () => cb(errors.InvalidObjectState));
+            }
+            return cb();
+        });
     }
 
     _getAndPutMultipartUploadOnce(sourceEntry, destEntry, log, cb) {
@@ -706,6 +720,12 @@ class MultipleBackendTask extends ReplicateObject {
      */
     _checkObjectState(sourceEntry, destEntry, log, cb) {
         return this._getSourceMD(sourceEntry, destEntry, log, (err, res) => {
+            if (err && err.code === 'ObjNotFound' &&
+            !sourceEntry.getIsDeleteMarker()) {
+                // The source object was unexpectedly deleted, so we skip CRR
+                // here.
+                return cb(errors.InvalidObjectState);
+            }
             if (err) {
                 return cb(err);
             }
@@ -998,9 +1018,11 @@ class MultipleBackendTask extends ReplicateObject {
             next => this._setupRoles(sourceEntry, log, next),
             (sourceRole, next) =>
                 this._refreshSourceEntry(sourceEntry, log, (err, res) => {
+                    console.log('2 HELLO!!');
                     if (err && err.code === 'ObjNotFound' &&
                         sourceEntry.getReplicationIsNFS() &&
                         !sourceEntry.getIsDeleteMarker()) {
+                        console.log('1 HELLO!!');
                         // The object was deleted before entry is processed, we
                         // can safely skip this entry.
                         return next(errors.InvalidObjectState);
